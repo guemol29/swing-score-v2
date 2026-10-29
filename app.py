@@ -1404,30 +1404,39 @@ if analyze:
         st.caption("El valor de cada component es sobre 100. El Swing Score és una puntuació heurística, no una probabilitat de benefici.")
         st.dataframe(results_df, use_container_width=True, hide_index=True)
 
-        st.markdown("**Guia ràpida de columnes**")
+        st.markdown("**Guia de columnes**")
         glossary = [
-            ("#", "Ordre del ticker segons la classificació."),
-            ("Ticker", "Símbol borsari de l'empresa."),
-            ("Preu", "Últim preu disponible de l'acció."),
-            ("Score règim", "Puntuació del classificador de règim (0–1)."),
-            ("Swing opportunity", "Puntuació global d'oportunitat swing (0–1)."),
-            ("Nivell swing", "Categoria de l'oportunitat: LOW, MIXED, INTER o HIGH."),
-            ("Tendència 25%", "Component de tendència i estructura (0–100)."),
-            ("Momentum 20%", "Component de força del moviment recent (0–100)."),
-            ("Força rel. 20d", "Component de força relativa recent (0–100)."),
-            ("Volum 20%", "Component de confirmació del volum (0–100)."),
-            ("Qualitat/risc 15%", "Component de qualitat tècnica i risc (0–100)."),
-            ("Etiqueta règim", "Règim tècnic detectat pel classificador."),
-            ("Stage 2", "Indica si supera el filtre de tendència Stage 2."),
-            ("Acció", "Orientació del sistema: per exemple, VIGILAR."),
-            ("Fiabilitat hist.", "Etiqueta de fiabilitat històrica del filtre Stage 2, si n'hi ha."),
-            ("vs MA30w", "Diferència percentual del preu respecte a la mitjana mòbil de 30 setmanes."),
-            ("MA30w pujant", "Si la mitjana mòbil de 30 setmanes té pendent ascendent."),
-            ("RS (26 setm.)", "Força relativa calculada pel sistema a 26 setmanes."),
-            ("Vol×", "Volum recent dividit pel volum de referència; 1,0 ≈ igual al referent."),
+            ("#", "Posició del ticker en la classificació, ordenada segons el resultat del sistema."),
+            ("Ticker", "Símbol borsari que identifica l'empresa o l'actiu analitzat."),
+            ("Preu", "Últim preu disponible a les dades de mercat descarregades."),
+            ("Score règim", "Puntuació del classificador de règim, expressada en una escala de 0 a 1."),
+            ("Swing opportunity", "Puntuació global de l'oportunitat swing; és una nota heurística de 0 a 1."),
+            ("Nivell swing", "Categoria de puntuació: LOW, MIXED, INTER o HIGH; no és una probabilitat de guany."),
+            ("Tendència 25%", "Nota de tendència i estructura del preu, normalitzada de 0 a 100 i ponderada al 25%."),
+            ("Momentum 20%", "Nota de la força del moviment recent del preu, normalitzada de 0 a 100 i ponderada al 20%."),
+            ("Força rel. 20d", "Nota de força relativa recent davant del mercat, normalitzada de 0 a 100 i ponderada al 20%."),
+            ("Volum 20%", "Nota de confirmació del moviment pel volum negociat, normalitzada de 0 a 100 i ponderada al 20%."),
+            ("Qualitat/risc 15%", "Nota de qualitat tècnica i control del risc, normalitzada de 0 a 100 i ponderada al 15%."),
+            ("Etiqueta règim", "Etiqueta del règim tècnic detectat pel classificador, independent de la nota Swing Opportunity."),
+            ("Stage 2", "Indica si el valor compleix les condicions del filtre de tendència Stage 2."),
+            ("Acció", "Orientació generada per les regles del sistema, com ara VIGILAR; no és una ordre de compra."),
+            ("Fiabilitat hist.", "Indicador de fiabilitat històrica associat al filtre, quan hi ha dades disponibles."),
+            ("vs MA30w", "Percentatge pel qual el preu actual se situa per sobre o per sota de la mitjana mòbil de 30 setmanes."),
+            ("MA30w pujant", "Indica si la mitjana mòbil de 30 setmanes presenta pendent ascendent en les dades analitzades."),
+            ("RS (26 setm.)", "Mesura de força relativa del sistema al llarg de 26 setmanes; consulteu la fórmula del motor per interpretar-ne l'escala."),
+            ("Vol×", "Relació entre el volum recent i el volum de referència: 1,00 equival aproximadament al nivell de referència."),
         ]
-        glossary_df = pd.DataFrame(glossary, columns=["Columna", "Descripció / significat"])
-        st.dataframe(glossary_df, use_container_width=True, hide_index=True)
+        import html
+        glossary_html = """<style>
+        .swing-glossary {width:100%; border-collapse:collapse; font-size:11px; line-height:1.1;}
+        .swing-glossary th,.swing-glossary td {padding:3px 7px; text-align:left; border-bottom:1px solid rgba(128,128,128,.22); white-space:nowrap;}
+        .swing-glossary th {font-weight:600; opacity:.8;}
+        .swing-glossary td:first-child {font-weight:600;}
+        </style><table class="swing-glossary"><thead><tr><th>Columna</th><th>Descripció / significat</th></tr></thead><tbody>"""
+        for name, meaning in glossary:
+            glossary_html += f"<tr><td>{html.escape(name)}</td><td>{html.escape(meaning)}</td></tr>"
+        glossary_html += "</tbody></table>"
+        st.markdown(glossary_html, unsafe_allow_html=True)
 
         st.subheader("3. Candidates Stage 2")
         stage2_df = results_df[results_df["Stage 2"] == "SÍ"].copy()
