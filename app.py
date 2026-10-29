@@ -1404,6 +1404,31 @@ if analyze:
         st.caption("El valor de cada component es sobre 100. El Swing Score és una puntuació heurística, no una probabilitat de benefici.")
         st.dataframe(results_df, use_container_width=True, hide_index=True)
 
+        st.markdown("**Guia ràpida de columnes**")
+        glossary = [
+            ("#", "Ordre del ticker segons la classificació."),
+            ("Ticker", "Símbol borsari de l'empresa."),
+            ("Preu", "Últim preu disponible de l'acció."),
+            ("Score règim", "Puntuació del classificador de règim (0–1)."),
+            ("Swing opportunity", "Puntuació global d'oportunitat swing (0–1)."),
+            ("Nivell swing", "Categoria de l'oportunitat: LOW, MIXED, INTER o HIGH."),
+            ("Tendència 25%", "Component de tendència i estructura (0–100)."),
+            ("Momentum 20%", "Component de força del moviment recent (0–100)."),
+            ("Força rel. 20d", "Component de força relativa recent (0–100)."),
+            ("Volum 20%", "Component de confirmació del volum (0–100)."),
+            ("Qualitat/risc 15%", "Component de qualitat tècnica i risc (0–100)."),
+            ("Etiqueta règim", "Règim tècnic detectat pel classificador."),
+            ("Stage 2", "Indica si supera el filtre de tendència Stage 2."),
+            ("Acció", "Orientació del sistema: per exemple, VIGILAR."),
+            ("Fiabilitat hist.", "Etiqueta de fiabilitat històrica del filtre Stage 2, si n'hi ha."),
+            ("vs MA30w", "Diferència percentual del preu respecte a la mitjana mòbil de 30 setmanes."),
+            ("MA30w pujant", "Si la mitjana mòbil de 30 setmanes té pendent ascendent."),
+            ("RS (26 setm.)", "Força relativa calculada pel sistema a 26 setmanes."),
+            ("Vol×", "Volum recent dividit pel volum de referència; 1,0 ≈ igual al referent."),
+        ]
+        glossary_df = pd.DataFrame(glossary, columns=["Columna", "Descripció / significat"])
+        st.dataframe(glossary_df, use_container_width=True, hide_index=True)
+
         st.subheader("3. Candidates Stage 2")
         stage2_df = results_df[results_df["Stage 2"] == "SÍ"].copy()
         if stage2_df.empty:
