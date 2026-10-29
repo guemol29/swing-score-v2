@@ -1428,8 +1428,8 @@ if analyze:
         ]
         import html
         glossary_html = """<style>
-        .swing-glossary {width:100%; border-collapse:collapse; font-size:11px; line-height:1.1;}
-        .swing-glossary th,.swing-glossary td {padding:3px 7px; text-align:left; border-bottom:1px solid rgba(128,128,128,.22); white-space:nowrap;}
+        .swing-glossary {width:100%; border-collapse:collapse; font-size:11px; line-height:1.0;}
+        .swing-glossary th,.swing-glossary td {padding:2px 7px; text-align:left; border-bottom:1px solid rgba(128,128,128,.22); white-space:nowrap;}
         .swing-glossary th {font-weight:600; opacity:.8;}
         .swing-glossary td:first-child {font-weight:600;}
         </style><table class="swing-glossary"><thead><tr><th>Columna</th><th>Descripció / significat</th></tr></thead><tbody>"""
