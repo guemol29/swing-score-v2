@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 import pandas as pd
 
-from swing_patterns import detect_breakout_throwback, build_pattern_chart
+from swing_patterns import detect_breakout_throwback, build_pattern_chart, build_pattern_overlays
 
 
 def make_data(after_breakout):
@@ -76,6 +76,23 @@ class TestSwingPatternDetector(unittest.TestCase):
         self.assertFalse(result["throwback_confirmed"])
         self.assertFalse(result["entry_confirmed"])
         self.assertEqual(result["pattern_status"], "PATRÓ INVALIDAT")
+
+
+    def test_pattern_overlays_include_base_breakout_and_throwback(self):
+        data = make_data([bar(100.8, 100.2, 101.3), bar(104.0, 103.2, 104.5)])
+        result = detect_breakout_throwback(data)
+        chart = build_pattern_chart(data, result)
+        overlays = build_pattern_overlays(chart, result)
+
+        self.assertEqual(len(overlays["base"]), 1)
+        self.assertEqual(
+            set(overlays["levels"]["Nivell"]),
+            {"Resistència", "Suport d'invalidació", "Màxim breakout"},
+        )
+        self.assertEqual(
+            set(overlays["events"]["Esdeveniment"]),
+            {"Breakout", "Throwback"},
+        )
 
     def test_chart_calculates_ma200_from_full_history(self):
         n = 230
