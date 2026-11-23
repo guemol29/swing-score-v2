@@ -19,6 +19,7 @@ def build_v2_altair_chart(chart_data: pd.DataFrame, result: dict):
         "breakout_date": result.get("v2_breakout_date"),
         "throwback_date": result.get("v2_throwback_date"),
         "failure_date": result.get("v2_failure_date"),
+        "gap_date": result.get("v2_gap_date"),
     }
     overlays = build_pattern_overlays(chart_data, pattern)
     plot_data = chart_data.rename_axis("Data").reset_index()
@@ -85,8 +86,8 @@ def build_v2_altair_chart(chart_data: pd.DataFrame, result: dict):
 
     if not overlays["events"].empty:
         events = overlays["events"]
-        event_domains = ["Breakout", "Throwback", "Invalidació"]
-        event_colors = ["#E69F00", "#2E8B57", "#D62728"]
+        event_domains = ["Breakout", "Throwback", "Invalidació", "Gap extraordinari"]
+        event_colors = ["#E69F00", "#2E8B57", "#D62728", "#CC4C02"]
         event_encoding = alt.Color(
             "Esdeveniment:N",
             scale=alt.Scale(domain=event_domains, range=event_colors),
