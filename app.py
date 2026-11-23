@@ -1465,159 +1465,202 @@ tickers = list(dict.fromkeys(uploaded_tickers + manual_list))
 if tickers:
     st.write(f"**Tickers preparats ({len(tickers)}):** " + ", ".join(tickers))
 
+# Streamlit reruns the script whenever a widget changes. Keep the completed
+# analysis in session_state so changing the chart ticker does not erase it.
+if "swing_ranked_results" not in st.session_state:
+    st.session_state["swing_ranked_results"] = None
+    st.session_state["swing_analysis_tickers"] = []
+    st.session_state["swing_analysis_period"] = None
+
 analyze = st.button("🔎 ANALITZAR", type="primary", disabled=not tickers, use_container_width=True)
 
 if analyze:
     with st.spinner("Descarregant dades i calculant Swing Score... Pot trigar una estona."):
         try:
-            ranked = rank_tickers(
+            fresh_ranked = rank_tickers(
                 tickers,
                 period=period,
                 interval="1d",
                 sort_by="swing",
                 stage2_only=False,
             )
+            st.session_state["swing_ranked_results"] = fresh_ranked
+            st.session_state["swing_analysis_tickers"] = list(tickers)
+            st.session_state["swing_analysis_period"] = period
+
+            available_charts = [
+                r.get("ticker") for r in fresh_ranked
+                if r.get("v2_chart_data") is not None and not r.get("v2_chart_data").empty
+            ]
+            if available_charts:
+                # Reset the chart selector to a valid option for a new analysis.
+                st.session_state["v2_pattern_chart_ticker"] = available_charts[0]
         except Exception as e:
             st.exception(e)
-            ranked = []
+            st.session_state["swing_ranked_results"] = []
+            st.session_state["swing_analysis_tickers"] = list(tickers)
+            st.session_state["swing_analysis_period"] = period
 
-    if not ranked:
-        st.warning("No s'han trobat resultats. Comprova els tickers i torna-ho a provar.")
-    else:
-        rows = []
-        for idx, r in enumerate(ranked, 1):
-            comps = r.get("swing_components") or {}
-            reliability = r.get("stage2_reliability") or {}
-            vs_ma = r.get("price_vs_ma30w")
-            rs = r.get("rs")
-            vol = r.get("vol_ratio")
-            row = {
-                "#": idx,
-                "Ticker": r.get("ticker"),
-                "Preu": round(float(r.get("price", np.nan)), 2),
-                "Score règim": round(float(r.get("score", 0.0)), 4),
-                "Swing opportunity": round(float(r.get("swing_opportunity_score", 0.0)), 4),
-                "Nivell swing": r.get("swing_opportunity_label", "N/A"),
-                "Tendència 25%": round(float(comps.get("trend_structure", np.nan)) * 100, 1) if comps.get("trend_structure") is not None else np.nan,
-                "Momentum 20%": round(float(comps.get("momentum", np.nan)) * 100, 1) if comps.get("momentum") is not None else np.nan,
-                "Força rel. 20d": round(float(comps.get("relative_strength", np.nan)) * 100, 1) if comps.get("relative_strength") is not None else np.nan,
-                "Volum 20%": round(float(comps.get("volume", np.nan)) * 100, 1) if comps.get("volume") is not None else np.nan,
-                "Qualitat/risc 15%": round(float(comps.get("quality_risk", np.nan)) * 100, 1) if comps.get("quality_risk") is not None else np.nan,
-                "Etiqueta règim": str(r.get("label", "")).upper(),
-                "Stage 2": "SÍ" if r.get("stage2") else "—",
-                "Tendència diària MM200": "Alcista" if r.get("trend_daily_bull") else ("Baixista/neutral" if r.get("trend_daily_available") else "N/D"),
-                "Tendència setmanal MM40": "Alcista" if r.get("trend_weekly_bull") else ("Baixista/neutral" if r.get("trend_weekly_available") else "N/D"),
-                "Tendència horària": "Alcista" if r.get("trend_hourly_bull") else ("Baixista/neutral" if r.get("trend_hourly_available") else "N/D"),
-                "Base": "Sí" if r.get("v2_base_detected") else "—",
-                "Breakout": "Sí" if r.get("v2_breakout_detected") else "—",
-                "Throwback": "Sí" if r.get("v2_throwback_confirmed") else "—",
-                "Patró V2": r.get("v2_pattern_status", "SENSE DADES"),
-                "Entrada V2": "CONFIRMADA" if r.get("v2_entry_ready") else "No",
-                "Acció": get_action(r),
-                "Fiabilitat hist.": reliability.get("reliability_label", "—") if r.get("stage2") else "—",
-                "vs MA30w": f"{vs_ma * 100:+.1f}%" if vs_ma is not None else "n/a",
-                "MA30w pujant": "Sí" if r.get("ma30w_rising") else "No",
-                "RS (26 setm.)": f"{rs * 100:+.1f}%" if rs is not None else "n/a",
-                "Vol×": f"{vol:.2f}" if vol is not None else "n/a",
-            }
-            rows.append(row)
+# Render the stored result on every rerun, including chart-selector changes.
+ranked = st.session_state.get("swing_ranked_results")
 
-        results_df = pd.DataFrame(rows)
-        st.subheader(f"2. Resultats — {len(results_df)} tickers")
-        st.caption("El Swing Opportunity continua sent heurístic. V2 no autoritza entrada si les tres temporalitats no són alcistes i no s'ha completat base → breakout → throwback → nou màxim.")
-        st.dataframe(results_df, use_container_width=True, hide_index=True)
+if ranked is None:
+    st.caption("Introdueix els tickers i prem ANALITZAR per obtenir els resultats.")
+elif not ranked:
+    st.warning("No s'han trobat resultats. Comprova els tickers i torna-ho a provar.")
+else:
+    analysed_tickers = st.session_state.get("swing_analysis_tickers", [])
+    analysed_period = st.session_state.get("swing_analysis_period", "—")
+    st.caption(
+        "Última anàlisi: "
+        + ", ".join(analysed_tickers)
+        + f" · Historial: {analysed_period}. "
+        + "Canviar el ticker del gràfic no torna a descarregar ni recalcular les dades."
+    )
 
-        st.subheader("3. Verificació gràfica del patró V2")
-        chart_tickers = [r.get("ticker") for r in ranked if r.get("v2_chart_data") is not None and not r.get("v2_chart_data").empty]
-        if chart_tickers:
-            chart_ticker = st.selectbox("Selecciona un valor per revisar el gràfic", chart_tickers, key="v2_pattern_chart_ticker")
-            chart_result = next(r for r in ranked if r.get("ticker") == chart_ticker)
-            chart_data = chart_result.get("v2_chart_data")
-            if chart_data is not None and not chart_data.empty:
-                st.line_chart(chart_data, use_container_width=True, height=420)
-            st.info(
-                f"{chart_result.get('v2_pattern_status', 'SENSE DADES')}: "
-                f"{chart_result.get('v2_pattern_reason', 'Sense detall disponible')}"
-            )
-            base_period = (
-                f"Base: {chart_result.get('v2_base_start') or '—'} → {chart_result.get('v2_base_end') or '—'}"
-            )
-            breakout_period = (
-                f"Breakout: {chart_result.get('v2_breakout_date') or '—'}"
-            )
-            throwback_period = (
-                f"Throwback: {chart_result.get('v2_throwback_date') or '—'}"
-            )
-            failure_period = chart_result.get("v2_failure_date")
-            st.caption(
-                f"{base_period} · {breakout_period} · {throwback_period}"
-                + (f" · Invalidació: {failure_period}" if failure_period else "")
-            )
-            resistance = chart_result.get("v2_resistance")
-            support = chart_result.get("v2_support_floor")
-            breakout_high = chart_result.get("v2_breakout_high")
-            st.caption(
-                f"Resistència: {resistance:.2f}" if resistance is not None else "Resistència: no identificada"
-            )
-            st.caption(
-                f"Suport d'invalidació: {support:.2f}" if support is not None else "Suport d'invalidació: no identificat"
-            )
-            st.caption(
-                f"Màxim de la vela de breakout: {breakout_high:.2f}" if breakout_high is not None else "Màxim de breakout: no identificat"
-            )
-        else:
-            st.info("No hi ha dades gràfiques disponibles per als tickers analitzats.")
+    rows = []
+    for idx, r in enumerate(ranked, 1):
+        comps = r.get("swing_components") or {}
+        reliability = r.get("stage2_reliability") or {}
+        vs_ma = r.get("price_vs_ma30w")
+        rs = r.get("rs")
+        vol = r.get("vol_ratio")
+        row = {
+            "#": idx,
+            "Ticker": r.get("ticker"),
+            "Preu": round(float(r.get("price", np.nan)), 2),
+            "Score règim": round(float(r.get("score", 0.0)), 4),
+            "Swing opportunity": round(float(r.get("swing_opportunity_score", 0.0)), 4),
+            "Nivell swing": r.get("swing_opportunity_label", "N/A"),
+            "Tendència 25%": round(float(comps.get("trend_structure", np.nan)) * 100, 1) if comps.get("trend_structure") is not None else np.nan,
+            "Momentum 20%": round(float(comps.get("momentum", np.nan)) * 100, 1) if comps.get("momentum") is not None else np.nan,
+            "Força rel. 20d": round(float(comps.get("relative_strength", np.nan)) * 100, 1) if comps.get("relative_strength") is not None else np.nan,
+            "Volum 20%": round(float(comps.get("volume", np.nan)) * 100, 1) if comps.get("volume") is not None else np.nan,
+            "Qualitat/risc 15%": round(float(comps.get("quality_risk", np.nan)) * 100, 1) if comps.get("quality_risk") is not None else np.nan,
+            "Etiqueta règim": str(r.get("label", "")).upper(),
+            "Stage 2": "SÍ" if r.get("stage2") else "—",
+            "Tendència diària MM200": "Alcista" if r.get("trend_daily_bull") else ("Baixista/neutral" if r.get("trend_daily_available") else "N/D"),
+            "Tendència setmanal MM40": "Alcista" if r.get("trend_weekly_bull") else ("Baixista/neutral" if r.get("trend_weekly_available") else "N/D"),
+            "Tendència horària": "Alcista" if r.get("trend_hourly_bull") else ("Baixista/neutral" if r.get("trend_hourly_available") else "N/D"),
+            "Base": "Sí" if r.get("v2_base_detected") else "—",
+            "Breakout": "Sí" if r.get("v2_breakout_detected") else "—",
+            "Throwback": "Sí" if r.get("v2_throwback_confirmed") else "—",
+            "Patró V2": r.get("v2_pattern_status", "SENSE DADES"),
+            "Entrada V2": "CONFIRMADA" if r.get("v2_entry_ready") else "No",
+            "Acció": get_action(r),
+            "Fiabilitat hist.": reliability.get("reliability_label", "—") if r.get("stage2") else "—",
+            "vs MA30w": f"{vs_ma * 100:+.1f}%" if vs_ma is not None else "n/a",
+            "MA30w pujant": "Sí" if r.get("ma30w_rising") else "No",
+            "RS (26 setm.)": f"{rs * 100:+.1f}%" if rs is not None else "n/a",
+            "Vol×": f"{vol:.2f}" if vol is not None else "n/a",
+        }
+        rows.append(row)
 
-        st.markdown("**Guia de columnes**")
-        glossary = [
-            ("#", "Lloc que ocupa el valor en la llista de resultats."),
-            ("Ticker", "Codi borsari de l'empresa, per exemple PANW."),
-            ("Preu", "Últim preu disponible per a aquest valor."),
-            ("Score règim", "Nota que indica com d'encaixat està el valor en el seu règim de mercat."),
-            ("Swing opportunity", "Nota general de l'interès del valor per a una possible operació swing."),
-            ("Nivell swing", "Grup de puntuació: LOW, MIXED, INTER o HIGH; no és una probabilitat de guanyar."),
-            ("Tendència 25%", "Si és alta, el preu segueix una direcció alcista clara; si és baixa, la tendència és feble o baixista."),
-            ("Momentum 20%", "Si és alt, el preu està pujant amb empenta; si és baix, el moviment perd força o cau."),
-            ("Força rel. 20d", "Si és alta, el valor ha anat millor que l'SPY recentment; si és baixa, ha quedat enrere."),
-            ("Volum 20%", "Si el volum negociat dona suport al moviment del preu."),
-            ("Qualitat/risc 15%", "Si és alta, els senyals tècnics i de risc són més favorables; si és baixa, cal més prudència."),
-            ("Etiqueta règim", "Tipus de situació tècnica detectada pel sistema, separada de la nota swing."),
-            ("Stage 2", "Indica si el valor passa el filtre de tendència de llarg termini (metodologia existent)."),
-            ("Tendència diària MM200", "Preu per sobre de la mitjana de 200 sessions i MM200 ascendent."),
-            ("Tendència setmanal MM40", "Preu per sobre de la mitjana de 40 setmanes i MM40 ascendent."),
-            ("Tendència horària", "Preu per sobre de la mitjana horària de 20 períodes i mitjana ascendent."),
-            ("Base / Breakout / Throwback", "Seqüència detectada sobre dades diàries: base compacta, tancament sobre resistència i retest amb suport."),
-            ("Entrada V2", "Només es confirma quan les tres tendències són alcistes i el preu supera el màxim de la vela de breakout després del throwback."),
-            ("Acció", "Orientació del sistema, com ara VIGILAR; no és una ordre de compra o venda."),
-            ("Fiabilitat hist.", "Què tan sovint ha funcionat aquest senyal en dades històriques, si hi ha dades."),
-            ("vs MA30w", "Quant està el preu per sobre o per sota de la mitjana de les últimes 30 setmanes."),
-            ("MA30w pujant", "Indica si aquesta mitjana de 30 setmanes està pujant."),
-            ("RS (26 setm.)", "Indicador del sistema sobre la força relativa del valor durant 26 setmanes."),
-            ("Vol×", "Compara el volum recent amb l'habitual: 1,00 vol dir aproximadament el mateix volum."),
-        ]
-        import html
-        glossary_html = """<style>
-        .swing-glossary {width:100%; border-collapse:collapse; font-size:11px; line-height:1.0;}
-        .swing-glossary th,.swing-glossary td {padding:2px 7px; text-align:left; border-bottom:1px solid rgba(128,128,128,.22); white-space:nowrap;}
-        .swing-glossary th {font-weight:600; opacity:.8;}
-        .swing-glossary td:first-child {font-weight:600;}
-        </style><table class="swing-glossary"><thead><tr><th>Columna</th><th>Descripció / significat</th></tr></thead><tbody>"""
-        for name, meaning in glossary:
-            glossary_html += f"<tr><td>{html.escape(name)}</td><td>{html.escape(meaning)}</td></tr>"
-        glossary_html += "</tbody></table>"
-        st.markdown(glossary_html, unsafe_allow_html=True)
+    results_df = pd.DataFrame(rows)
+    st.subheader(f"2. Resultats — {len(results_df)} tickers")
+    st.caption("El Swing Opportunity continua sent heurístic. V2 no autoritza entrada si les tres temporalitats no són alcistes i no s'ha completat base → breakout → throwback → nou màxim.")
+    st.dataframe(results_df, use_container_width=True, hide_index=True)
 
-        st.subheader("3. Candidates Stage 2")
-        stage2_df = results_df[results_df["Stage 2"] == "SÍ"].copy()
-        if stage2_df.empty:
-            st.info("Cap ticker compleix actualment el filtre Stage 2.")
-        else:
-            st.dataframe(stage2_df, use_container_width=True, hide_index=True)
+    st.subheader("3. Verificació gràfica del patró V2")
+    chart_tickers = [
+        r.get("ticker") for r in ranked
+        if r.get("v2_chart_data") is not None and not r.get("v2_chart_data").empty
+    ]
+    if chart_tickers:
+        # Streamlit stores the selected value in session_state between reruns.
+        # If the watchlist changed, select the first available chart ticker.
+        if st.session_state.get("v2_pattern_chart_ticker") not in chart_tickers:
+            st.session_state["v2_pattern_chart_ticker"] = chart_tickers[0]
 
-        csv_bytes = results_df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            "⬇️ Descarregar resultats CSV",
-            data=csv_bytes,
-            file_name=f"swing_score_resultats_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-            mime="text/csv",
+        chart_ticker = st.selectbox(
+            "Selecciona un valor per revisar el gràfic",
+            chart_tickers,
+            key="v2_pattern_chart_ticker",
         )
+        chart_result = next(r for r in ranked if r.get("ticker") == chart_ticker)
+        chart_data = chart_result.get("v2_chart_data")
+        if chart_data is not None and not chart_data.empty:
+            st.line_chart(chart_data, use_container_width=True, height=420)
+        st.info(
+            f"{chart_result.get('v2_pattern_status', 'SENSE DADES')}: "
+            f"{chart_result.get('v2_pattern_reason', 'Sense detall disponible')}"
+        )
+        base_period = (
+            f"Base: {chart_result.get('v2_base_start') or '—'} → {chart_result.get('v2_base_end') or '—'}"
+        )
+        breakout_period = f"Breakout: {chart_result.get('v2_breakout_date') or '—'}"
+        throwback_period = f"Throwback: {chart_result.get('v2_throwback_date') or '—'}"
+        failure_period = chart_result.get("v2_failure_date")
+        st.caption(
+            f"{base_period} · {breakout_period} · {throwback_period}"
+            + (f" · Invalidació: {failure_period}" if failure_period else "")
+        )
+        resistance = chart_result.get("v2_resistance")
+        support = chart_result.get("v2_support_floor")
+        breakout_high = chart_result.get("v2_breakout_high")
+        st.caption(
+            f"Resistència: {resistance:.2f}" if resistance is not None else "Resistència: no identificada"
+        )
+        st.caption(
+            f"Suport d'invalidació: {support:.2f}" if support is not None else "Suport d'invalidació: no identificat"
+        )
+        st.caption(
+            f"Màxim de la vela de breakout: {breakout_high:.2f}"
+            if breakout_high is not None else "Màxim de breakout: no identificat"
+        )
+    else:
+        st.info("No hi ha dades gràfiques disponibles per als tickers analitzats.")
+
+    st.markdown("**Guia de columnes**")
+    glossary = [
+        ("#", "Lloc que ocupa el valor en la llista de resultats."),
+        ("Ticker", "Codi borsari de l'empresa, per exemple PANW."),
+        ("Preu", "Últim preu disponible per a aquest valor."),
+        ("Score règim", "Nota que indica com d'encaixat està el valor en el seu règim de mercat."),
+        ("Swing opportunity", "Nota general de l'interès del valor per a una possible operació swing."),
+        ("Nivell swing", "Grup de puntuació: LOW, MIXED, INTER o HIGH; no és una probabilitat de guanyar."),
+        ("Tendència 25%", "Si és alta, el preu segueix una direcció alcista clara; si és baixa, la tendència és feble o baixista."),
+        ("Momentum 20%", "Si és alt, el preu està pujant amb empenta; si és baix, el moviment perd força o cau."),
+        ("Força rel. 20d", "Si és alta, el valor ha anat millor que l'SPY recentment; si és baixa, ha quedat enrere."),
+        ("Volum 20%", "Si el volum negociat dona suport al moviment del preu."),
+        ("Qualitat/risc 15%", "Si és alta, els senyals tècnics i de risc són més favorables; si és baixa, cal més prudència."),
+        ("Etiqueta règim", "Tipus de situació tècnica detectada pel sistema, separada de la nota swing."),
+        ("Stage 2", "Indica si el valor passa el filtre de tendència de llarg termini (metodologia existent)."),
+        ("Tendència diària MM200", "Preu per sobre de la mitjana de 200 sessions i MM200 ascendent."),
+        ("Tendència setmanal MM40", "Preu per sobre de la mitjana de 40 setmanes i MM40 ascendent."),
+        ("Tendència horària", "Preu per sobre de la mitjana horària de 20 períodes i mitjana ascendent."),
+        ("Base / Breakout / Throwback", "Seqüència detectada sobre dades diàries: base compacta, tancament sobre resistència i retest amb suport."),
+        ("Entrada V2", "Només es confirma quan les tres tendències són alcistes i el preu supera el màxim de la vela de breakout després del throwback."),
+        ("Acció", "Orientació del sistema, com ara VIGILAR; no és una ordre de compra o venda."),
+        ("Fiabilitat hist.", "Què tan sovint ha funcionat aquest senyal en dades històriques, si hi ha dades."),
+        ("vs MA30w", "Quant està el preu per sobre o per sota de la mitjana de les últimes 30 setmanes."),
+        ("MA30w pujant", "Indica si aquesta mitjana de 30 setmanes està pujant."),
+        ("RS (26 setm.)", "Indicador del sistema sobre la força relativa del valor durant 26 setmanes."),
+        ("Vol×", "Compara el volum recent amb l'habitual: 1,00 vol dir aproximadament el mateix volum."),
+    ]
+    import html
+    glossary_html = """<style>
+    .swing-glossary {width:100%; border-collapse:collapse; font-size:11px; line-height:1.0;}
+    .swing-glossary th,.swing-glossary td {padding:2px 7px; text-align:left; border-bottom:1px solid rgba(128,128,128,.22); white-space:nowrap;}
+    .swing-glossary th {font-weight:600; opacity:.8;}
+    .swing-glossary td:first-child {font-weight:600;}
+    </style><table class="swing-glossary"><thead><tr><th>Columna</th><th>Descripció / significat</th></tr></thead><tbody>"""
+    for name, meaning in glossary:
+        glossary_html += f"<tr><td>{html.escape(name)}</td><td>{html.escape(meaning)}</td></tr>"
+    glossary_html += "</tbody></table>"
+    st.markdown(glossary_html, unsafe_allow_html=True)
+
+    st.subheader("4. Candidates Stage 2")
+    stage2_df = results_df[results_df["Stage 2"] == "SÍ"].copy()
+    if stage2_df.empty:
+        st.info("Cap ticker compleix actualment el filtre Stage 2.")
+    else:
+        st.dataframe(stage2_df, use_container_width=True, hide_index=True)
+
+    csv_bytes = results_df.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇️ Descarregar resultats CSV",
+        data=csv_bytes,
+        file_name=f"swing_score_resultats_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
+        mime="text/csv",
+    )
