@@ -249,11 +249,14 @@ def build_pattern_chart(df: pd.DataFrame, pattern: dict[str, Any], max_rows: int
     """Build numeric chart series for Streamlit with price and pattern reference levels."""
     if df is None or df.empty or "Close" not in df:
         return pd.DataFrame()
+    full_close = pd.to_numeric(df["Close"], errors="coerce")
     source = df.tail(max_rows).copy()
-    close = pd.to_numeric(source["Close"], errors="coerce")
+    close = full_close.reindex(source.index)
     chart = pd.DataFrame(index=source.index)
     chart["Preu"] = close
-    chart["MM200 diària"] = close.rolling(200, min_periods=200).mean()
+    # Calculate the 200-session average on the full downloaded history,
+    # then display only the latest chart window.
+    chart["MM200 diària"] = full_close.rolling(200, min_periods=200).mean().reindex(source.index)
 
     levels = {
         "Resistència base": pattern.get("resistance"),
