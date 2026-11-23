@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from swing_patterns import detect_breakout_throwback, build_pattern_chart, build_pattern_overlays
+from swing_charts import build_v2_altair_chart
 
 
 def make_data(after_breakout):
@@ -93,6 +94,26 @@ class TestSwingPatternDetector(unittest.TestCase):
             set(overlays["events"]["Esdeveniment"]),
             {"Breakout", "Throwback"},
         )
+
+
+    def test_altair_chart_includes_pattern_zones_and_markers(self):
+        data = make_data([bar(100.8, 100.2, 101.3), bar(104.0, 103.2, 104.5)])
+        pattern = detect_breakout_throwback(data)
+        chart_data = build_pattern_chart(data, pattern)
+        result = {
+            "v2_base_start": pattern["base_start"],
+            "v2_base_end": pattern["base_end"],
+            "v2_base_support": pattern["base_support"],
+            "v2_resistance": pattern["resistance"],
+            "v2_support_floor": pattern["support_floor"],
+            "v2_breakout_high": pattern["breakout_high"],
+            "v2_breakout_date": pattern["breakout_date"],
+            "v2_throwback_date": pattern["throwback_date"],
+            "v2_failure_date": pattern.get("failure_date"),
+        }
+        spec = build_v2_altair_chart(chart_data, result).to_dict()
+        self.assertGreaterEqual(len(spec["layer"]), 5)
+        self.assertEqual(spec["height"], 430)
 
     def test_chart_calculates_ma200_from_full_history(self):
         n = 230
