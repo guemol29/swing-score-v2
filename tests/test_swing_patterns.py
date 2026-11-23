@@ -29,7 +29,7 @@ def bar(close, low=None, high=None):
 
 class TestSwingPatternDetector(unittest.TestCase):
     def test_base_forming_without_breakout(self):
-        data = pd.DataFrame([bar(100.0, 99.0, 101.0) for _ in range(20)],
+        data = pd.DataFrame([bar(100.0, 99.0, 101.0) for _ in range(21)],
                             index=pd.bdate_range("2026-01-01", periods=20))
         result = detect_breakout_throwback(data)
         self.assertTrue(result["base_detected"])
