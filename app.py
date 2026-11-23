@@ -877,6 +877,9 @@ def fetch_v2_methodology(ticker: str) -> dict:
                 "v2_range_pct": pattern["range_pct"],
                 "v2_drift_pct": pattern["drift_pct"],
                 "v2_invalidated": pattern["invalidated"],
+                "v2_gap_date": pattern.get("gap_date"),
+                "v2_gap_pct": pattern.get("gap_pct"),
+                "v2_gap_price": pattern.get("gap_price"),
             })
             result["v2_chart_data"] = build_pattern_chart(daily, pattern)
     except Exception as exc:
