@@ -64,32 +64,16 @@ def _base_metrics(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> di
 
 
 def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
-    """Detect a compact base, a closing breakout, a support-holding retest and a new-high close.
-
-    A valid throwback requires a daily low that reaches the retest zone while the
-    close holds above 98% of resistance. A daily close below 97% of resistance
-    invalidates the pattern. Entry confirmation is a later daily close above the
-    high of the breakout candle. All percentages are explicit heuristic thresholds.
-    """
+    """Detect base -> breakout -> throwback -> new-high close; invalidates lost support."""
     empty = {
-        "base_detected": False,
-        "breakout_detected": False,
-        "throwback_confirmed": False,
-        "entry_confirmed": False,
-        "invalidated": False,
-        "pattern_status": "SENSE PATRÓ",
+        "base_detected": False, "breakout_detected": False,
+        "throwback_confirmed": False, "entry_confirmed": False,
+        "invalidated": False, "pattern_status": "SENSE PATRÓ",
         "pattern_reason": "No s'ha identificat una base vàlida.",
-        "resistance": None,
-        "base_support": None,
-        "support_floor": None,
-        "breakout_high": None,
-        "base_start": None,
-        "base_end": None,
-        "breakout_date": None,
-        "throwback_date": None,
-        "range_pct": None,
-        "drift_pct": None,
-        "last_close_dev_pct": None,
+        "resistance": None, "base_support": None, "support_floor": None,
+        "breakout_high": None, "base_start": None, "base_end": None,
+        "breakout_date": None, "throwback_date": None, "range_pct": None,
+        "drift_pct": None, "last_close_dev_pct": None,
     }
     required = {"High", "Low", "Close"}
     if df is None or df.empty or not required.issubset(df.columns):
@@ -106,23 +90,23 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
     closes = pd.to_numeric(data["Close"], errors="coerce").to_numpy(dtype=float)
     n = len(data)
     index = data.index
+    latest_invalidated = None
+    latest_pending = None
 
-    # Search most-recent first; only a completed daily close can confirm a breakout.
+    # Search newest-to-oldest, but do not let a later continuation breakout
+    # hide the earlier breakout -> throwback -> confirmation sequence.
     first_i = max(BASE_LOOKBACK, n - MAX_PATTERN_LOOKBACK)
     for breakout_i in range(n - 1, first_i - 1, -1):
         start_i = breakout_i - BASE_LOOKBACK
         metrics = _base_metrics(
-            highs[start_i:breakout_i],
-            lows[start_i:breakout_i],
-            closes[start_i:breakout_i],
+            highs[start_i:breakout_i], lows[start_i:breakout_i], closes[start_i:breakout_i]
         )
         if not metrics or not metrics["valid"]:
             continue
 
         resistance = metrics["resistance"]
         breakout_level = resistance * (1.0 + BREAKOUT_BUFFER)
-        prior_close = closes[breakout_i - 1]
-        breakout_close = closes[breakout_i]
+        prior_close, breakout_close = closes[breakout_i - 1], closes[breakout_i]
         if not (np.isfinite(prior_close) and np.isfinite(breakout_close)):
             continue
         if prior_close > breakout_level or breakout_close <= breakout_level:
@@ -132,124 +116,105 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
         support_floor = resistance * SUPPORT_INVALIDATION
         retest_ceiling = resistance * (1.0 + RETEST_UPPER)
         retest_floor = resistance * RETEST_CLOSE_FLOOR
-        retest_i = None
-        invalidated = False
-        end_i = min(n, breakout_i + BREAKOUT_WAIT_SESSIONS + 1)
+        common = {
+            "base_detected": True, "breakout_detected": True,
+            "resistance": resistance, "base_support": metrics["base_support"],
+            "support_floor": support_floor, "breakout_high": breakout_high,
+            "base_start": _date_or_none(index, start_i),
+            "base_end": _date_or_none(index, breakout_i - 1),
+            "breakout_date": _date_or_none(index, breakout_i),
+            "range_pct": metrics["range_pct"], "drift_pct": metrics["drift_pct"],
+            "last_close_dev_pct": metrics["last_close_dev_pct"],
+        }
 
+        retest_i = None
+        invalidation_i = None
+        end_i = min(n, breakout_i + BREAKOUT_WAIT_SESSIONS + 1)
         for j in range(breakout_i + 1, end_i):
             if closes[j] < support_floor:
-                invalidated = True
+                invalidation_i = j
                 break
             if lows[j] <= retest_ceiling and closes[j] >= retest_floor:
                 retest_i = j
                 break
 
-        if invalidated:
-            empty.update({
-                "base_detected": True,
-                "breakout_detected": True,
-                "invalidated": True,
-                "pattern_status": "PATRÓ INVALIDAT",
+        if invalidation_i is not None:
+            candidate = dict(empty)
+            candidate.update(common)
+            candidate.update({
+                "invalidated": True, "pattern_status": "PATRÓ INVALIDAT",
                 "pattern_reason": f"Tancament diari per sota del suport d'invalidació ({support_floor:.2f}).",
-                "resistance": resistance,
-                "base_support": metrics["base_support"],
-                "support_floor": support_floor,
-                "breakout_high": breakout_high,
-                "base_start": _date_or_none(index, start_i),
-                "base_end": _date_or_none(index, breakout_i - 1),
-                "breakout_date": _date_or_none(index, breakout_i),
-                "range_pct": metrics["range_pct"],
-                "drift_pct": metrics["drift_pct"],
-                "last_close_dev_pct": metrics["last_close_dev_pct"],
+                "failure_date": _date_or_none(index, invalidation_i),
             })
-            return empty
+            if latest_invalidated is None:
+                latest_invalidated = candidate
+            continue
 
         if retest_i is None:
             expired = n - 1 - breakout_i > BREAKOUT_WAIT_SESSIONS
-            empty.update({
-                "base_detected": True,
-                "breakout_detected": True,
+            candidate = dict(empty)
+            candidate.update(common)
+            candidate.update({
                 "pattern_status": "BREAKOUT CADUCAT" if expired else "ESPERANT THROWBACK",
                 "pattern_reason": (
                     "No hi ha hagut retest dins de 20 sessions."
-                    if expired else "El breakout és vàlid, però encara no hi ha retest del nivell."
+                    if expired else "Breakout detectat; encara no hi ha retest del nivell."
                 ),
-                "resistance": resistance,
-                "base_support": metrics["base_support"],
-                "support_floor": support_floor,
-                "breakout_high": breakout_high,
-                "base_start": _date_or_none(index, start_i),
-                "base_end": _date_or_none(index, breakout_i - 1),
-                "breakout_date": _date_or_none(index, breakout_i),
-                "range_pct": metrics["range_pct"],
-                "drift_pct": metrics["drift_pct"],
             })
-            return empty
+            if latest_pending is None:
+                latest_pending = candidate
+            continue
 
-        # A retest is not confirmed if price subsequently closes below support.
         later_below = np.where(closes[retest_i + 1:] < support_floor)[0]
         if len(later_below):
             failure_i = retest_i + 1 + int(later_below[0])
-            empty.update({
-                "base_detected": True,
-                "breakout_detected": True,
-                "invalidated": True,
-                "pattern_status": "PATRÓ INVALIDAT",
+            candidate = dict(empty)
+            candidate.update(common)
+            candidate.update({
+                "invalidated": True, "pattern_status": "PATRÓ INVALIDAT",
                 "pattern_reason": f"El preu ha perdut el suport després del throwback ({support_floor:.2f}).",
-                "resistance": resistance,
-                "base_support": metrics["base_support"],
-                "support_floor": support_floor,
-                "breakout_high": breakout_high,
-                "base_start": _date_or_none(index, start_i),
-                "base_end": _date_or_none(index, breakout_i - 1),
-                "breakout_date": _date_or_none(index, breakout_i),
                 "throwback_date": _date_or_none(index, retest_i),
-                "range_pct": metrics["range_pct"],
-                "drift_pct": metrics["drift_pct"],
-                "last_close_dev_pct": metrics["last_close_dev_pct"],
                 "failure_date": _date_or_none(index, failure_i),
             })
-            return empty
+            if latest_invalidated is None:
+                latest_invalidated = candidate
+            continue
 
         confirmed = bool(n - 1 > retest_i and closes[-1] > breakout_high)
-        empty.update({
-            "base_detected": True,
-            "breakout_detected": True,
-            "throwback_confirmed": True,
-            "entry_confirmed": confirmed,
+        candidate = dict(empty)
+        candidate.update(common)
+        candidate.update({
+            "throwback_confirmed": True, "entry_confirmed": confirmed,
             "pattern_status": "ENTRADA CONFIRMADA" if confirmed else "ESPERANT NOU MÀXIM",
             "pattern_reason": (
                 "El tancament actual supera el màxim de la vela de breakout."
                 if confirmed else "El retest ha mantingut el suport; falta tancar per sobre del màxim del breakout."
             ),
-            "resistance": resistance,
-            "base_support": metrics["base_support"],
-            "support_floor": support_floor,
-            "breakout_high": breakout_high,
-            "base_start": _date_or_none(index, start_i),
-            "base_end": _date_or_none(index, breakout_i - 1),
-            "breakout_date": _date_or_none(index, breakout_i),
             "throwback_date": _date_or_none(index, retest_i),
-            "range_pct": metrics["range_pct"],
-            "drift_pct": metrics["drift_pct"],
-            "last_close_dev_pct": metrics["last_close_dev_pct"],
         })
-        return empty
+        if confirmed:
+            return candidate
+        # Keep looking: a newer incomplete breakout should not mask a valid
+        # older throwback that is still waiting for the confirmation close.
+        if latest_pending is None:
+            latest_pending = candidate
 
-    # No active breakout found: report a current, still-forming base if present.
+    if latest_invalidated is not None and latest_pending is None:
+        return latest_invalidated
+    if latest_pending is not None:
+        return latest_pending
+
     metrics = _base_metrics(highs[-BASE_LOOKBACK:], lows[-BASE_LOOKBACK:], closes[-BASE_LOOKBACK:])
     if metrics and metrics["valid"]:
         empty.update({
-            "base_detected": True,
-            "pattern_status": "BASE EN FORMACIÓ",
+            "base_detected": True, "pattern_status": "BASE EN FORMACIÓ",
             "pattern_reason": "Consolidació lateral detectada; encara no hi ha tancament per sobre de la resistència.",
-            "resistance": metrics["resistance"],
-            "base_support": metrics["base_support"],
+            "resistance": metrics["resistance"], "base_support": metrics["base_support"],
             "support_floor": metrics["resistance"] * SUPPORT_INVALIDATION,
             "base_start": _date_or_none(index, n - BASE_LOOKBACK),
             "base_end": _date_or_none(index, n - 1),
-            "range_pct": metrics["range_pct"],
-            "drift_pct": metrics["drift_pct"],
+            "range_pct": metrics["range_pct"], "drift_pct": metrics["drift_pct"],
+            "last_close_dev_pct": metrics["last_close_dev_pct"],
         })
     return empty
 
