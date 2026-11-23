@@ -9,6 +9,7 @@ import pandas as pd
 BASE_LOOKBACK = 20
 BASE_MAX_RANGE = 0.18
 BASE_MAX_DRIFT = 0.05
+BASE_MAX_LAST_CLOSE_DEV = 0.015
 BASE_MAX_SLOPE_PER_BAR = 0.0015
 BREAKOUT_BUFFER = 0.005
 RETEST_UPPER = 0.03
@@ -41,11 +42,14 @@ def _base_metrics(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> di
         return None
     width = resistance / support - 1.0
     drift = abs(float(c[-1] / c[0] - 1.0)) if c[0] else np.inf
+    median_close = float(np.median(c))
+    last_close_dev = abs(float(c[-1] / median_close - 1.0)) if median_close else np.inf
     x = np.arange(len(c), dtype=float)
     slope = float(np.polyfit(x, c, 1)[0] / max(1e-9, float(np.mean(c))))
     valid = (
         width <= BASE_MAX_RANGE
         and drift <= BASE_MAX_DRIFT
+        and last_close_dev <= BASE_MAX_LAST_CLOSE_DEV
         and abs(slope) <= BASE_MAX_SLOPE_PER_BAR
     )
     return {
@@ -54,6 +58,7 @@ def _base_metrics(highs: np.ndarray, lows: np.ndarray, closes: np.ndarray) -> di
         "base_support": support,
         "range_pct": float(width),
         "drift_pct": float(drift),
+        "last_close_dev_pct": float(last_close_dev),
         "slope_per_bar": slope,
     }
 
@@ -84,6 +89,7 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
         "throwback_date": None,
         "range_pct": None,
         "drift_pct": None,
+        "last_close_dev_pct": None,
     }
     required = {"High", "Low", "Close"}
     if df is None or df.empty or not required.issubset(df.columns):
@@ -154,6 +160,7 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
                 "breakout_date": _date_or_none(index, breakout_i),
                 "range_pct": metrics["range_pct"],
                 "drift_pct": metrics["drift_pct"],
+                "last_close_dev_pct": metrics["last_close_dev_pct"],
             })
             return empty
 
@@ -199,6 +206,7 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
                 "throwback_date": _date_or_none(index, retest_i),
                 "range_pct": metrics["range_pct"],
                 "drift_pct": metrics["drift_pct"],
+                "last_close_dev_pct": metrics["last_close_dev_pct"],
                 "failure_date": _date_or_none(index, failure_i),
             })
             return empty
@@ -224,6 +232,7 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
             "throwback_date": _date_or_none(index, retest_i),
             "range_pct": metrics["range_pct"],
             "drift_pct": metrics["drift_pct"],
+            "last_close_dev_pct": metrics["last_close_dev_pct"],
         })
         return empty
 
