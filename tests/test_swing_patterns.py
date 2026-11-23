@@ -79,6 +79,32 @@ class TestSwingPatternDetector(unittest.TestCase):
         self.assertEqual(result["pattern_status"], "PATRÓ INVALIDAT")
 
 
+    def test_large_one_day_move_is_flagged_not_called_breakout(self):
+        rows = [bar(100.0, 99.0, 101.0) for _ in range(21)]
+        rows.append(bar(135.0, 134.0, 136.0))
+        rows.extend([bar(136.0, 134.5, 137.0) for _ in range(10)])
+        data = pd.DataFrame(rows, index=pd.bdate_range("2026-01-01", periods=len(rows)))
+        result = detect_breakout_throwback(data)
+
+        self.assertEqual(result["pattern_status"], "MOVIMENT EXTRAORDINARI")
+        self.assertFalse(result["breakout_detected"])
+        self.assertFalse(result["entry_confirmed"])
+        self.assertAlmostEqual(result["gap_pct"], 0.35, places=3)
+        self.assertIsNotNone(result["gap_date"])
+
+    def test_overlay_dates_match_timezone_aware_yahoo_index(self):
+        data = make_data([bar(100.8, 100.2, 101.3), bar(104.0, 103.2, 104.5)])
+        data.index = data.index.tz_localize("America/New_York")
+        pattern = detect_breakout_throwback(data)
+        chart = build_pattern_chart(data, pattern)
+        overlays = build_pattern_overlays(chart, pattern)
+
+        self.assertEqual(len(overlays["base"]), 1)
+        self.assertEqual(
+            set(overlays["events"]["Esdeveniment"]),
+            {"Breakout", "Throwback"},
+        )
+
     def test_pattern_overlays_include_base_breakout_and_throwback(self):
         data = make_data([bar(100.8, 100.2, 101.3), bar(104.0, 103.2, 104.5)])
         result = detect_breakout_throwback(data)
