@@ -241,3 +241,61 @@ def build_pattern_chart(df: pd.DataFrame, pattern: dict[str, Any], max_rows: int
         if level is not None and np.isfinite(float(level)):
             chart[name] = float(level)
     return chart.dropna(how="all")
+
+
+def build_pattern_overlays(chart: pd.DataFrame, pattern: dict[str, Any]) -> dict[str, pd.DataFrame]:
+    """Create compact dataframes for the Altair base zone, horizontal levels and event markers."""
+    empty = {
+        "base": pd.DataFrame(columns=["Inici", "Final", "Suport", "Resistència"]),
+        "levels": pd.DataFrame(columns=["Nivell", "Valor"]),
+        "events": pd.DataFrame(columns=["Data", "Esdeveniment", "Preu"]),
+    }
+    if chart is None or chart.empty or "Preu" not in chart.columns:
+        return empty
+
+    index = pd.DatetimeIndex(pd.to_datetime(chart.index)).normalize()
+    close = pd.to_numeric(chart["Preu"], errors="coerce")
+    by_day = pd.Series(close.to_numpy(), index=index)
+
+    base_start = pattern.get("base_start")
+    base_end = pattern.get("base_end")
+    base_support = pattern.get("base_support")
+    resistance = pattern.get("resistance")
+    if base_start and base_end and base_support is not None and resistance is not None:
+        start_day, end_day = pd.Timestamp(base_start), pd.Timestamp(base_end)
+        if start_day.normalize() in index and end_day.normalize() in index:
+            empty["base"] = pd.DataFrame([{
+                "Inici": start_day,
+                "Final": end_day,
+                "Suport": float(base_support),
+                "Resistència": float(resistance),
+            }])
+
+    levels = [
+        ("Resistència", pattern.get("resistance")),
+        ("Suport d'invalidació", pattern.get("support_floor")),
+        ("Màxim breakout", pattern.get("breakout_high")),
+    ]
+    empty["levels"] = pd.DataFrame([
+        {"Nivell": name, "Valor": float(value)}
+        for name, value in levels
+        if value is not None and np.isfinite(float(value))
+    ], columns=["Nivell", "Valor"])
+
+    events = []
+    for key, label in (
+        ("breakout_date", "Breakout"),
+        ("throwback_date", "Throwback"),
+        ("failure_date", "Invalidació"),
+    ):
+        raw_date = pattern.get(key)
+        if not raw_date:
+            continue
+        day = pd.Timestamp(raw_date).normalize()
+        if day not in by_day.index:
+            continue
+        value = by_day.loc[day]
+        if pd.notna(value):
+            events.append({"Data": day, "Esdeveniment": label, "Preu": float(value)})
+    empty["events"] = pd.DataFrame(events, columns=["Data", "Esdeveniment", "Preu"])
+    return empty
