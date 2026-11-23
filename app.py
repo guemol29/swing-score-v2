@@ -10,6 +10,8 @@ import numpy as np
 
 from typing import Optional
 
+from swing_patterns import detect_breakout_throwback, build_pattern_chart
+
 
 
 EPS = 1e-9
@@ -830,39 +832,8 @@ def _trend_state(close: pd.Series, window: int, slope_lookback: int) -> dict:
 
 
 def _detect_breakout_throwback(df: pd.DataFrame) -> dict:
-    """Identify base -> breakout -> retest -> close above breakout-candle high."""
-    unavailable = {"base_detected": False, "breakout_detected": False,
-                   "throwback_confirmed": False, "entry_confirmed": False,
-                   "resistance": None}
-    if df is None or len(df) < 65 or not {"High", "Low", "Close"}.issubset(df.columns):
-        return unavailable
-    data = df.tail(100).copy()
-    highs = pd.to_numeric(data["High"], errors="coerce").to_numpy(dtype=float)
-    lows = pd.to_numeric(data["Low"], errors="coerce").to_numpy(dtype=float)
-    closes = pd.to_numeric(data["Close"], errors="coerce").to_numpy(dtype=float)
-    n = len(data)
-    for breakout_i in range(n - 3, max(20, n - 55) - 1, -1):
-        base_start = max(0, breakout_i - 20)
-        bh, bl = highs[base_start:breakout_i], lows[base_start:breakout_i]
-        if len(bh) < 15 or not np.isfinite(bh).all() or not np.isfinite(bl).all():
-            continue
-        resistance, base_low = float(np.max(bh)), float(np.min(bl))
-        if base_low <= 0 or (resistance / base_low - 1.0) > 0.20 or not closes[breakout_i] > resistance:
-            continue
-        retest_i = None
-        for j in range(breakout_i + 1, min(n - 1, breakout_i + 21)):
-            if np.isfinite(lows[j]) and np.isfinite(closes[j]) and lows[j] <= resistance * 1.03 and closes[j] >= resistance * 0.98:
-                retest_i = j
-                break
-        if retest_i is None:
-            continue
-        # Need a later close strictly above the breakout candle high, not merely an intraday wick.
-        later = closes[retest_i + 1:]
-        confirmed = bool(len(later) and np.isfinite(later).all() and closes[-1] > highs[breakout_i])
-        return {"base_detected": True, "breakout_detected": True,
-                "throwback_confirmed": True, "entry_confirmed": confirmed,
-                "resistance": resistance}
-    return unavailable
+    """Compatibility wrapper; detailed logic lives in the tested swing_patterns module."""
+    return detect_breakout_throwback(df)
 
 
 def fetch_v2_methodology(ticker: str) -> dict:
@@ -885,11 +856,27 @@ def fetch_v2_methodology(ticker: str) -> dict:
             result["trend_daily_bull"] = d["bullish"]
             result["v2_ma200_daily"] = d.get("ma")
             pattern = _detect_breakout_throwback(daily)
-            result.update({"v2_base_detected": pattern["base_detected"],
-                           "v2_breakout_detected": pattern["breakout_detected"],
-                           "v2_throwback_confirmed": pattern["throwback_confirmed"],
-                           "v2_entry_confirmed": pattern["entry_confirmed"],
-                           "v2_resistance": pattern["resistance"]})
+            result.update({
+                "v2_base_detected": pattern["base_detected"],
+                "v2_breakout_detected": pattern["breakout_detected"],
+                "v2_throwback_confirmed": pattern["throwback_confirmed"],
+                "v2_entry_confirmed": pattern["entry_confirmed"],
+                "v2_resistance": pattern["resistance"],
+                "v2_base_support": pattern["base_support"],
+                "v2_support_floor": pattern["support_floor"],
+                "v2_breakout_high": pattern["breakout_high"],
+                "v2_pattern_status": pattern["pattern_status"],
+                "v2_pattern_reason": pattern["pattern_reason"],
+                "v2_base_start": pattern["base_start"],
+                "v2_base_end": pattern["base_end"],
+                "v2_breakout_date": pattern["breakout_date"],
+                "v2_throwback_date": pattern["throwback_date"],
+                "v2_failure_date": pattern.get("failure_date"),
+                "v2_range_pct": pattern["range_pct"],
+                "v2_drift_pct": pattern["drift_pct"],
+                "v2_invalidated": pattern["invalidated"],
+            })
+            result["v2_chart_data"] = build_pattern_chart(daily, pattern)
     except Exception as exc:
         print(f"[V2 daily {ticker}] {type(exc).__name__}: {exc}")
     try:
@@ -1524,6 +1511,7 @@ if analyze:
                 "Base": "Sí" if r.get("v2_base_detected") else "—",
                 "Breakout": "Sí" if r.get("v2_breakout_detected") else "—",
                 "Throwback": "Sí" if r.get("v2_throwback_confirmed") else "—",
+                "Patró V2": r.get("v2_pattern_status", "SENSE DADES"),
                 "Entrada V2": "CONFIRMADA" if r.get("v2_entry_ready") else "No",
                 "Acció": get_action(r),
                 "Fiabilitat hist.": reliability.get("reliability_label", "—") if r.get("stage2") else "—",
@@ -1538,6 +1526,47 @@ if analyze:
         st.subheader(f"2. Resultats — {len(results_df)} tickers")
         st.caption("El Swing Opportunity continua sent heurístic. V2 no autoritza entrada si les tres temporalitats no són alcistes i no s'ha completat base → breakout → throwback → nou màxim.")
         st.dataframe(results_df, use_container_width=True, hide_index=True)
+
+        st.subheader("3. Verificació gràfica del patró V2")
+        chart_tickers = [r.get("ticker") for r in ranked if r.get("v2_chart_data") is not None and not r.get("v2_chart_data").empty]
+        if chart_tickers:
+            chart_ticker = st.selectbox("Selecciona un valor per revisar el gràfic", chart_tickers, key="v2_pattern_chart_ticker")
+            chart_result = next(r for r in ranked if r.get("ticker") == chart_ticker)
+            chart_data = chart_result.get("v2_chart_data")
+            if chart_data is not None and not chart_data.empty:
+                st.line_chart(chart_data, use_container_width=True, height=420)
+            st.info(
+                f"{chart_result.get('v2_pattern_status', 'SENSE DADES')}: "
+                f"{chart_result.get('v2_pattern_reason', 'Sense detall disponible')}"
+            )
+            base_period = (
+                f"Base: {chart_result.get('v2_base_start') or '—'} → {chart_result.get('v2_base_end') or '—'}"
+            )
+            breakout_period = (
+                f"Breakout: {chart_result.get('v2_breakout_date') or '—'}"
+            )
+            throwback_period = (
+                f"Throwback: {chart_result.get('v2_throwback_date') or '—'}"
+            )
+            failure_period = chart_result.get("v2_failure_date")
+            st.caption(
+                f"{base_period} · {breakout_period} · {throwback_period}"
+                + (f" · Invalidació: {failure_period}" if failure_period else "")
+            )
+            resistance = chart_result.get("v2_resistance")
+            support = chart_result.get("v2_support_floor")
+            breakout_high = chart_result.get("v2_breakout_high")
+            st.caption(
+                f"Resistència: {resistance:.2f}" if resistance is not None else "Resistència: no identificada"
+            )
+            st.caption(
+                f"Suport d'invalidació: {support:.2f}" if support is not None else "Suport d'invalidació: no identificat"
+            )
+            st.caption(
+                f"Màxim de la vela de breakout: {breakout_high:.2f}" if breakout_high is not None else "Màxim de breakout: no identificat"
+            )
+        else:
+            st.info("No hi ha dades gràfiques disponibles per als tickers analitzats.")
 
         st.markdown("**Guia de columnes**")
         glossary = [
