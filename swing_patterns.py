@@ -17,6 +17,8 @@ RETEST_CLOSE_FLOOR = 0.98
 SUPPORT_INVALIDATION = 0.97
 BREAKOUT_WAIT_SESSIONS = 20
 MAX_PATTERN_LOOKBACK = 60
+EXTRAORDINARY_DAILY_MOVE = 0.15
+EXTRAORDINARY_GAP_LOOKBACK = 60
 
 
 def _date_or_none(index: pd.Index, position: int | None) -> str | None:
@@ -74,6 +76,7 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
         "breakout_high": None, "base_start": None, "base_end": None,
         "breakout_date": None, "throwback_date": None, "range_pct": None,
         "drift_pct": None, "last_close_dev_pct": None,
+        "gap_date": None, "gap_pct": None, "gap_price": None,
     }
     required = {"High", "Low", "Close"}
     if df is None or df.empty or not required.issubset(df.columns):
@@ -90,6 +93,30 @@ def detect_breakout_throwback(df: pd.DataFrame) -> dict[str, Any]:
     closes = pd.to_numeric(data["Close"], errors="coerce").to_numpy(dtype=float)
     n = len(data)
     index = data.index
+
+    # Large one-day repricing events can be caused by mergers, special
+    # distributions, splits, or major news. Do not label them as technical
+    # breakouts until the event has been reviewed.
+    gap_start = max(1, n - EXTRAORDINARY_GAP_LOOKBACK)
+    close_returns = closes[1:] / np.maximum(1e-9, closes[:-1]) - 1.0
+    candidate_returns = close_returns[gap_start - 1:]
+    extraordinary = np.where(np.abs(candidate_returns) >= EXTRAORDINARY_DAILY_MOVE)[0]
+    if len(extraordinary):
+        gap_i = gap_start + int(extraordinary[-1])
+        gap_pct = float(close_returns[gap_i - 1])
+        empty.update({
+            "pattern_status": "MOVIMENT EXTRAORDINARI",
+            "pattern_reason": (
+                f"Variació diària del {gap_pct:+.1%} el {_date_or_none(index, gap_i)}. "
+                "Pot correspondre a una operació corporativa o notícia material; "
+                "no es classifica com a breakout tècnic sense revisió."
+            ),
+            "gap_date": _date_or_none(index, gap_i),
+            "gap_pct": gap_pct,
+            "gap_price": float(closes[gap_i]),
+        })
+        return empty
+
     latest_invalidated = None
     latest_pending = None
 
@@ -244,7 +271,7 @@ def build_pattern_chart(df: pd.DataFrame, pattern: dict[str, Any], max_rows: int
 
 
 def build_pattern_overlays(chart: pd.DataFrame, pattern: dict[str, Any]) -> dict[str, pd.DataFrame]:
-    """Create compact dataframes for the Altair base zone, horizontal levels and event markers."""
+    """Create chart overlays; normalize source and event dates to the same timezone-free day."""
     empty = {
         "base": pd.DataFrame(columns=["Inici", "Final", "Suport", "Resistència"]),
         "levels": pd.DataFrame(columns=["Nivell", "Valor"]),
@@ -253,17 +280,27 @@ def build_pattern_overlays(chart: pd.DataFrame, pattern: dict[str, Any]) -> dict
     if chart is None or chart.empty or "Preu" not in chart.columns:
         return empty
 
-    index = pd.DatetimeIndex(pd.to_datetime(chart.index)).normalize()
+    # Yahoo Finance may return timezone-aware daily timestamps; detector dates
+    # are date-only strings. Normalize both to the same calendar-day key.
+    normalized_index = pd.DatetimeIndex(
+        pd.to_datetime(chart.index, utc=True)
+    ).tz_convert(None).normalize()
     close = pd.to_numeric(chart["Preu"], errors="coerce")
-    by_day = pd.Series(close.to_numpy(), index=index)
+    by_day = pd.Series(close.to_numpy(), index=normalized_index)
+
+    def as_day(value):
+        stamp = pd.Timestamp(value)
+        if stamp.tzinfo is not None:
+            stamp = stamp.tz_convert("UTC").tz_localize(None)
+        return stamp.normalize()
 
     base_start = pattern.get("base_start")
     base_end = pattern.get("base_end")
     base_support = pattern.get("base_support")
     resistance = pattern.get("resistance")
     if base_start and base_end and base_support is not None and resistance is not None:
-        start_day, end_day = pd.Timestamp(base_start), pd.Timestamp(base_end)
-        if start_day.normalize() in index and end_day.normalize() in index:
+        start_day, end_day = as_day(base_start), as_day(base_end)
+        if start_day in by_day.index and end_day in by_day.index:
             empty["base"] = pd.DataFrame([{
                 "Inici": start_day,
                 "Final": end_day,
@@ -287,11 +324,12 @@ def build_pattern_overlays(chart: pd.DataFrame, pattern: dict[str, Any]) -> dict
         ("breakout_date", "Breakout"),
         ("throwback_date", "Throwback"),
         ("failure_date", "Invalidació"),
+        ("gap_date", "Gap extraordinari"),
     ):
         raw_date = pattern.get(key)
         if not raw_date:
             continue
-        day = pd.Timestamp(raw_date).normalize()
+        day = as_day(raw_date)
         if day not in by_day.index:
             continue
         value = by_day.loc[day]
